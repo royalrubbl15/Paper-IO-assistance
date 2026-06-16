@@ -1,0 +1,219 @@
+// ==UserScript==
+// @name Paper.IO by Silas
+// @namespace -
+// @version 1.2
+// @description Zoom hack, game speed change hack, instant movement hack, and pause/resume functionality. Works for Teams Mode, Classic Mode, Battle Royale Mode, and World Map Mode.
+// @author Silas
+// @match https://paperio.site/teams/
+// @match https://paperio.site/
+// @match https://paperio.site/worldmap/
+// @match https://paperio.site/battleroyale/
+// @match https://paperio.site/conflict/
+// @match https://www.crazygames.com/game/paper-io-2
+// @run-at document-start
+// @license GPL-3.0-or-later
+// @grant none
+// @icon https://play-lh.googleusercontent.com/8qj0nHkRkNvztNFVQVw1Gc7YCOUMIqFZ3VAbwYSEuxsjjXNMTvEihQ6VbUaz2YsR0A=w240-h480
+// ==/UserScript==
+
+(function() {
+    const MIN_ZOOM = 25;
+    const MAX_ZOOM = 100000;
+
+    const MIN_GAME_SPEED = 0;
+    const MAX_GAME_SPEED = 900000;
+
+    const DEBUG_LEVEL = 0 /* 0 - disabled; 1 - info; 2 - errors */;
+    const API_PROPS = ['paperio2api', 'paper2'];
+
+    class Utils {
+        static minmax(n, min, max) {
+            return Math.min(Math.max(n, min), max);
+        }
+CONFIG
+        static debug(level, ...args) {
+            let _level;
+
+            switch (level) {
+                case 'log':
+                    _level = 0;
+                    break;
+                case 'error':
+                    _level = 1;
+                    break;
+            }
+
+            if (DEBUG_LEVEL > _level) {
+                console[level].apply(this, args);
+            }
+        }
+
+        static waitForProperty(target, props) {
+            let tries = 0;
+
+            try {
+                return new Promise((res, rej) => {
+                    let intervalId = setInterval(() => {
+                        tries++;
+
+                        let validProp = props.find(prop => target[prop]);
+
+                        if (validProp) {
+                            clearInterval(intervalId);
+                            return res(target[validProp]);
+                        }
+
+                        if (tries > 6) {
+                            rej('Timeout error, cannot find properties: "' + props + '" in target object.');
+                        }
+                    }, 1e3);
+                });
+            } catch(e) {
+                Utils.debug('error', 'waitForProperty', e);
+            }
+        }
+    }
+
+    class Hack {
+        static init(paper_api) {
+            const GAME = paper_api.game;
+            const CONFIG = GAME.config;
+            const SCENE = getScene();
+            let isPaused = false;
+            let previousSpeed = CONFIG.unitSpeed;
+
+            Utils.debug('log', this.name + ' initialized!');
+
+            class GameSpeedHack {
+                static init(maxGameSpeed, minGameSpeed) {
+                    window.addEventListener('keydown', e => {
+                        if (e.code === 'ArrowUp') {
+                            e.preventDefault();
+                            CONFIG.unitSpeed += 40;
+                            CONFIG.unitSpeed = Utils.minmax(CONFIG.unitSpeed, minGameSpeed, maxGameSpeed);
+                        } else if (e.code === 'ArrowDown') {
+                            e.preventDefault();
+                            CONFIG.unitSpeed -= 40;
+                            CONFIG.unitSpeed = Utils.minmax(CONFIG.unitSpeed, minGameSpeed, maxGameSpeed);
+                        }
+                    });
+
+                    window.addEventListener('keydown', e => {
+                        if (e.code === 'Space') {
+                            e.preventDefault();
+                            if (isPaused) {
+                                CONFIG.unitSpeed = previousSpeed;
+                                isPaused = false;
+                            } else {
+                                previousSpeed = CONFIG.unitSpeed;
+                                CONFIG.unitSpeed =250;
+                                isPaused = true;
+                            }
+                        }
+                    });
+                }
+            }
+
+            class ZoomHack {
+                static init(maxZoom, minZoom) {
+                    window.addEventListener('wheel', e => {
+                        e.preventDefault();
+
+                        const isPositive = e.deltaY > 0;
+                        const zoomChange = isPositive ? -0.1 : 0.1; // Adjust zoom sensitivity
+
+                        SCENE.maxScale += zoomChange;
+                        SCENE.maxScale = Utils.minmax(SCENE.maxScale, minZoom, maxZoom);
+                    });
+                }
+            }
+
+            class InstantMovement {
+                static init(listenersData) {
+                    listenersData.forEach(data => {
+                        try {
+                            window.addEventListener('keydown', e => {
+                                try {
+                                    if (e.code === data.code) {
+                                        const PLAYER = GAME.player;
+
+                                        PLAYER.position[data.direction] += 40 * (data.isNegative ? -1 : 1);
+                                    }
+                                } catch (err) {
+                                    Utils.debug('error', data, err);
+                                }
+                            });
+                        } catch (e) {
+                            Utils.debug('error', this.name, data, e);
+                        }
+                    });
+                }
+            }
+
+            GameSpeedHack.init(
+                MAX_GAME_SPEED,
+                MIN_GAME_SPEED
+            );
+
+            ZoomHack.init(
+                MAX_ZOOM,
+                MIN_ZOOM
+            );
+
+            InstantMovement.init([{
+                code: 'KeyW',
+                direction: 'y',
+                isNegative: true,
+            }, {
+                code: 'KeyS',
+                direction: 'y',
+                isNegative: false,
+            }, {
+                code: 'KeyA',
+                direction: 'x',
+                isNegative: true,
+            }, {
+                code: 'KeyD',
+                direction: 'x',
+                isNegative: false,
+            }]);
+
+            function getScene() {
+                if (paper_api.currentConfig) {
+                    return paper_api.currentConfig;
+                }
+
+                if (paper_api.configs) {
+                    return paper_api.configs.paper2_classic;
+                }
+
+                return paper_api.config;
+            }
+        }
+    }
+
+    class Main {
+        static init() {
+            Utils.waitForProperty(window, API_PROPS).then(paperapi => {
+                Utils.waitForProperty(paperapi, ['game']).then(() => {
+                    Main.showInstructions();
+                    Hack.init(paperapi);
+                });
+            });
+        }
+
+        static showInstructions() {
+            alert(
+                "PAPER.IO Script - Made by Silas:\n" +
+                "- Follow me on Github: https://github.com/royalrubbl15:\n" +
+                "- This script only for education purpose only, please use this script as tools to developed your programming language.\n" +
+                "- Zoom: Use the mouse wheel to zoom in and out.\n" +
+                "- Change game speed: Use the up/down arrow keys to adjust speed.\n" +
+                "- Instant Movement: Use 'W', 'A', 'S', 'D' for quick moves in the respective directions.\n" +
+                "- Pause/Resume: Press 'Spacebar' to pause or resume the game."
+            );
+        }
+    }
+
+    Main.init();
+})();
